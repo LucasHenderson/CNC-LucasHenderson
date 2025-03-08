@@ -1,149 +1,101 @@
-import random
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import numpy as np
+import random
+import math
 
 class GeneticAlgorithm:
     def __init__(self, TAM_POP, recortes_disponiveis, sheet_width, sheet_height, numero_geracoes=100):
+        print("Algoritmo Genético para Otimização do Corte de Chapa. Executado por Lucas.")
         self.TAM_POP = TAM_POP
-        self.initial_layout = recortes_disponiveis
+        self.initial_layout = recortes_disponiveis  # Available cut parts
         self.sheet_width = sheet_width
         self.sheet_height = sheet_height
-        self.numero_geracoes = numero_geracoes
         self.POP = []
+        self.POP_AUX = []
         self.aptidao = []
-        self.best_solution = None
-
+        self.numero_geracoes = numero_geracoes
         self.initialize_population()
+        self.melhor_aptidoes = []
+        self.optimized_layout = None  # To be set after optimization
 
     def initialize_population(self):
-        """ Inicializa a população evitando sobreposição desde o início """
-        self.POP = []
-        for _ in range(self.TAM_POP):
-            individual = []
-            for recorte in self.initial_layout:
-                placed = False
-                attempts = 0
-                while not placed and attempts < 100:
-                    x = random.randint(0, self.sheet_width - recorte.get("largura", recorte.get("r", 1)*2))
-                    y = random.randint(0, self.sheet_height - recorte.get("altura", recorte.get("r", 1)*2))
-                    rotation = random.choice([0, 90]) if "rotacao" in recorte else 0
-                    shape = {"tipo": recorte["tipo"], "x": x, "y": y, "rotacao": rotation, **recorte}
-                    if self.is_within_bounds(shape) and not self.is_overlapping(shape, individual):
-                        individual.append(shape)
-                        placed = True
-                    attempts += 1
-            self.POP.append(individual)
-
-    def calculate_area(self, shape):
-        """ Calcula a área de uma forma """
-        if shape["tipo"] == "retangular":
-            return shape["largura"] * shape["altura"]
-        elif shape["tipo"] == "circular":
-            return np.pi * (shape["r"] ** 2)
-        elif shape["tipo"] == "triangular":
-            return (shape["b"] * shape["h"]) / 2
-        elif shape["tipo"] == "diamante":
-            return shape["largura"] * shape["altura"] / 2
-        return 0
+        self.POP = [random.sample(self.initial_layout, len(self.initial_layout)) for _ in range(self.TAM_POP)]
+        for individuo in self.POP:
+            for item in individuo:
+                if "rotacao" in item:
+                    item["rotacao"] = random.choice([0, 90, 180, 270])
 
     def evaluate(self):
-        """ Avaliação otimizada, considerando área útil e sobreposições """
         self.aptidao = []
-        for individual in self.POP:
-            total_area = sum(self.calculate_area(shape) for shape in individual if self.is_within_bounds(shape))
-            overlap_penalty = sum(self.calculate_area(shape) for i, shape in enumerate(individual) if self.is_overlapping(shape, individual[:i]))
-            self.aptidao.append(total_area - overlap_penalty)
-
-    def is_within_bounds(self, shape):
-        """ Verifica se a forma está dentro da chapa """
-        if shape["tipo"] == "retangular":
-            return 0 <= shape["x"] <= self.sheet_width - shape["largura"] and 0 <= shape["y"] <= self.sheet_height - shape["altura"]
-        elif shape["tipo"] == "circular":
-            return shape["x"] - shape["r"] >= 0 and shape["y"] - shape["r"] >= 0 and shape["x"] + shape["r"] <= self.sheet_width and shape["y"] + shape["r"] <= self.sheet_height
-        elif shape["tipo"] == "triangular":
-            return 0 <= shape["x"] <= self.sheet_width - shape["b"] and 0 <= shape["y"] <= self.sheet_height - shape["h"]
-        elif shape["tipo"] == "diamante":
-            return 0 <= shape["x"] <= self.sheet_width - shape["largura"] and 0 <= shape["y"] <= self.sheet_height - shape["altura"]
-        return False
-
-    def is_overlapping(self, shape, others):
-        """ Verifica se a forma se sobrepõe a outras no layout """
-        for other in others:
-            if shape["tipo"] == "circular" and other["tipo"] == "circular":
-                distance = np.hypot(shape["x"] - other["x"], shape["y"] - other["y"])
-                if distance < shape["r"] + other["r"]:
-                    return True
-            else:
-                if not (shape["x"] + shape.get("largura", shape.get("r", 1)*2) <= other["x"] or
-                        other["x"] + other.get("largura", other.get("r", 1)*2) <= shape["x"] or
-                        shape["y"] + shape.get("altura", shape.get("r", 1)*2) <= other["y"] or
-                        other["y"] + other.get("altura", other.get("r", 1)*2) <= shape["y"]):
-                    return True
-        return False
+        for individuo in self.POP:
+            area_utilizada = sum(self.calculate_area(r) for r in individuo)
+            aptidao = self.sheet_width * self.sheet_height - area_utilizada
+            self.aptidao.append(aptidao if aptidao >= 0 else float('-inf'))
 
     def genetic_operators(self):
-        """ Mantém e melhora a população com crossover e mutação eficientes """
-        sorted_population = [x for _, x in sorted(zip(self.aptidao, self.POP), reverse=True)]
-        self.POP = sorted_population[:self.TAM_POP // 2]
-
-        while len(self.POP) < self.TAM_POP:
-            p1, p2 = random.sample(self.POP, 2)
-            child = self.crossover(p1, p2)
-            self.mutation(child)
-            self.POP.append(child)
-
-    def crossover(self, parent1, parent2):
-        """ Realiza crossover sem gerar sobreposições excessivas """
-        crossover_point = len(parent1) // 2
-        child = parent1[:crossover_point] + parent2[crossover_point:]
-        return [shape for shape in child if self.is_within_bounds(shape) and not self.is_overlapping(shape, child)]
-
-    def mutation(self, individual):
-        """ Mutação otimizada para não gerar sobreposição """
-        for shape in individual:
+        nova_populacao = []
+        for _ in range(self.TAM_POP // 2):
+            pais = random.sample(self.POP, 2)
+            corte = random.randint(1, len(self.initial_layout) - 1)
+            filho1 = pais[0][:corte] + pais[1][corte:]
+            filho2 = pais[1][:corte] + pais[0][corte:]
             if random.random() < 0.1:
-                attempts = 0
-                while attempts < 50:
-                    x = random.randint(0, self.sheet_width - shape.get("largura", shape.get("r", 1)*2))
-                    y = random.randint(0, self.sheet_height - shape.get("altura", shape.get("r", 1)*2))
-                    if "rotacao" in shape:
-                        shape["rotacao"] = random.choice([0, 90])
-                    if self.is_within_bounds(shape) and not self.is_overlapping(shape, individual):
-                        shape["x"], shape["y"] = x, y
-                        break
-                    attempts += 1
+                idx1, idx2 = random.sample(range(len(filho1)), 2)
+                filho1[idx1], filho1[idx2] = filho1[idx2], filho1[idx1]
+            if random.random() < 0.1:
+                idx1, idx2 = random.sample(range(len(filho2)), 2)
+                filho2[idx1], filho2[idx2] = filho2[idx2], filho2[idx1]
+            nova_populacao.extend([filho1, filho2])
+        self.POP = nova_populacao
 
     def run(self):
-        """ Executa o algoritmo e retorna a melhor solução """
         for _ in range(self.numero_geracoes):
             self.evaluate()
             self.genetic_operators()
-        self.best_solution = self.POP[0]
-        return self.best_solution
+        melhor_idx = np.argmax(self.aptidao)
+        self.optimized_layout = self.POP[melhor_idx]
+        return self.optimized_layout
 
-    def optimize_and_display(self):
-        """ Executa o algoritmo e exibe o melhor layout """
-        best_layout = self.run()
-        self.plot_layout(best_layout)
-        return best_layout
+    def calculate_area(self, item):
+        if item["tipo"] == "retangular":
+            return item["largura"] * item["altura"]
+        elif item["tipo"] == "circular":
+            return math.pi * (item["r"] ** 2)
+        elif item["tipo"] == "triangular":
+            return (item["b"] * item["h"]) / 2
+        elif item["tipo"] == "diamante":
+            return (item["largura"] * item["altura"]) / 2
+        return 0
 
-    def plot_layout(self, layout):
-        """ Exibe o layout otimizado com todas as formas """
-        fig, ax = plt.subplots(figsize=(12, 6))
+    def display_layout(self, layout, title="Layout"):
+        fig, ax = plt.subplots()
         ax.set_xlim(0, self.sheet_width)
         ax.set_ylim(0, self.sheet_height)
-
-        for shape in layout:
-            if shape["tipo"] == "retangular":
-                rect = patches.Rectangle((shape["x"], shape["y"]), shape["largura"], shape["altura"], color='blue', alpha=0.5)
+        ax.set_title(title)
+        for item in layout:
+            x, y = item.get("x", 0), item.get("y", 0)
+            rotacao = item.get("rotacao", 0)
+            if item["tipo"] == "retangular":
+                largura, altura = item["largura"], item["altura"]
+                if rotacao in [90, 270]:
+                    largura, altura = altura, largura
+                rect = plt.Rectangle((x, y), largura, altura, fill=True, edgecolor='black', facecolor='gray', alpha=0.5)
                 ax.add_patch(rect)
-            elif shape["tipo"] == "circular":
-                circle = patches.Circle((shape["x"], shape["y"]), shape["r"], color='red', alpha=0.5)
-                ax.add_patch(circle)
-            elif shape["tipo"] == "diamante":
-                diamond = patches.RegularPolygon((shape["x"], shape["y"]), numVertices=4, radius=shape["largura"]/2, color='green', alpha=0.5)
+            elif item["tipo"] == "circular":
+                circ = plt.Circle((x, y), item["r"], fill=True, edgecolor='black', facecolor='blue', alpha=0.5)
+                ax.add_patch(circ)
+            elif item["tipo"] == "triangular":
+                b, h = item["b"], item["h"]
+                triangle = plt.Polygon([(x, y), (x + b / 2, y + h), (x - b / 2, y + h)], fill=True, edgecolor='black', facecolor='green', alpha=0.5)
+                ax.add_patch(triangle)
+            elif item["tipo"] == "diamante":
+                w, h = item["largura"], item["altura"]
+                diamond = plt.Polygon([(x, y + h / 2), (x + w / 2, y), (x, y - h / 2), (x - w / 2, y)], fill=True, edgecolor='black', facecolor='red', alpha=0.5)
                 ax.add_patch(diamond)
-
-        plt.grid(True)
         plt.show()
+
+    def optimize_and_display(self):
+        self.display_layout(self.initial_layout, title="Initial Layout - Genetic Algorithm")
+        self.optimized_layout = self.run()
+        self.display_layout(self.optimized_layout, title="Optimized Layout - Genetic Algorithm")
+        return self.optimized_layout
